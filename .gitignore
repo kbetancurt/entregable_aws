@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+env/
+venv/
+.venv/
+
+# AWS SAM
+.aws-sam/
+
+# Frontend
+node_modules/
+.next/
+dist/
+build/
+
+# Entorno y secretos
+.env
+samconfig.toml
