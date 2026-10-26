@@ -14,3 +14,5 @@ botocore==1.34.0
 # --- Validación de Datos & Utilidades ---
 pydantic==2.6.4
 python-dotenv==1.0.1
+
+tzdata
