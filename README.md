@@ -47,7 +47,7 @@ hotel-serverless-system/
 |       |-- index.py
 |       |-- requirements.txt
 |
-|-- frontend/                # Aplicacion SPA (Next.js / React / Tailwind)
+|-- frontend/                # SPA estática en React + Vite
 |   |-- ...
 |
 |-- scripts/                 # Scripts auxiliares de desarrollo
@@ -113,15 +113,15 @@ Aunque la implementación inicial cubre la operación de un solo hotel, el dise�
 
 El sistema utiliza una única tabla de DynamoDB (`HotelSystemTable`) para almacenar los datos del hotel. Las reservas se realizan por **tipo de habitación** y rango de fechas. El inventario se controla por noche para evitar confirmar reservas cuando no hay disponibilidad.
 
-Para la demo, el inventario es simulado. Por ejemplo, se puede definir que hay cuatro habitaciones del tipo `KING-CIUDAD` disponibles cada noche. No se asigna una habitación física específica al huésped.
+Para la demo, el inventario es simulado. Por ejemplo, se puede definir que hay cuatro habitaciones del tipo `KING-RIVER` disponibles cada noche. No se asigna una habitación física específica al huésped.
 
 ### 7.1. Patrones de Diseño de Claves
 
 | Entidad | Partition Key (`PK`) | Sort Key (`SK`) | Atributos principales |
 | :--- | :--- | :--- | :--- |
 | **Metadata del hotel** | `HOTEL#aloft-mvd` | `HOTEL#METADATA` | `nombre`, `direccion`, `descripcion`, `amenities` |
-| **Tipo de habitación** | `HOTEL#aloft-mvd` | `TIPO#KING-CIUDAD` | `nombre`, `capacidad`, `precio_base`, `inventario_total` |
-| **Inventario por noche** | `HOTEL#aloft-mvd#TIPO#KING-CIUDAD` | `NOCHE#2026-10-23` | `inventario_total`, `disponibles` |
+| **Tipo de habitación** | `HOTEL#aloft-mvd` | `TIPO#KING-RIVER` | `nombre`, `capacidad`, `precio_base`, `inventario_total` |
+| **Inventario por noche** | `HOTEL#aloft-mvd#TIPO#KING-RIVER` | `NOCHE#2026-10-23` | `inventario_total`, `disponibles` |
 | **Reserva** | `HOTEL#aloft-mvd` | `RES#RESV-2026-001` | `usuario_id`, `tipo_habitacion`, `fecha_inicio`, `fecha_fin`, `estado`, `precio_total` |
 | **Alerta OTA / paridad** | `HOTEL#aloft-mvd` | `ALERTA#2026-10-23T14:00:00` | `tipo_habitacion`, `fuente_ota`, `precio_ota`, `precio_directo_web`, `moneda`, `leida` |
 
@@ -155,8 +155,8 @@ Este elemento describe el tipo de habitación. No tiene un estado general `DISPO
 ```json
 {
   "PK": "HOTEL#aloft-mvd",
-  "SK": "TIPO#KING-CIUDAD",
-  "nombre": "Habitación 1 King, Vista a la Ciudad",
+  "SK": "TIPO#KING-RIVER",
+  "nombre": "Habitación King con vista al río",
   "capacidad": 2,
   "precio_base": 140,
   "inventario_total": 4
@@ -169,7 +169,7 @@ Este ejemplo representa la noche del 23 de octubre de 2026. De las cuatro habita
 
 ```json
 {
-  "PK": "HOTEL#aloft-mvd#TIPO#KING-CIUDAD",
+  "PK": "HOTEL#aloft-mvd#TIPO#KING-RIVER",
   "SK": "NOCHE#2026-10-23",
   "inventario_total": 4,
   "disponibles": 3
@@ -189,7 +189,7 @@ Se almacena un único elemento por estancia, sin importar cuántas noches incluy
   "PK": "HOTEL#aloft-mvd",
   "SK": "RES#RESV-2026-001",
   "usuario_id": "usr_998123-abc",
-  "tipo_habitacion": "KING-CIUDAD",
+  "tipo_habitacion": "KING-RIVER",
   "fecha_inicio": "2026-10-23",
   "fecha_fin": "2026-10-25",
   "estado": "CONFIRMADA",
@@ -206,13 +206,13 @@ La alerta utiliza el mismo identificador de tipo de habitación que el sistema p
 {
   "PK": "HOTEL#aloft-mvd",
   "SK": "ALERTA#2026-10-23T14:00:00",
-  "tipo_habitacion": "KING-CIUDAD",
-  "nombre_ota": "Habitación 1 King, Vista a la Ciudad",
+  "tipo_habitacion": "KING-RIVER",
+  "nombre_ota": "Habitación King con vista al río",
   "fuente_ota": "Booking.com",
   "precio_ota": 120,
   "precio_directo_web": 140,
   "moneda": "USD",
-  "mensaje": "Booking.com ofrece la habitación King Ciudad a USD 120; la tarifa directa del hotel es USD 140.",
+  "mensaje": "Booking.com ofrece la habitación King con vista al río a USD 120; la tarifa directa del hotel es USD 140.",
   "leida": false
 }
 ```
