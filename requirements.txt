@@ -1,0 +1,16 @@
+# --- Scraper & Automatización Web ---
+playwright==1.42.0
+aiohttp==3.9.3
+requests==2.31.0
+pillow==10.2.0
+
+# --- Inteligencia Artificial & Visión ---
+google-genai>=0.1.0
+
+# --- AWS & Base de Datos (DynamoDB) ---
+boto3==1.34.0
+botocore==1.34.0
+
+# --- Validación de Datos & Utilidades ---
+pydantic==2.6.4
+python-dotenv==1.0.1
