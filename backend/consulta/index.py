@@ -6,6 +6,10 @@ from decimal import Decimal
 import boto3
 from boto3.dynamodb.conditions import Key
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 # -----------------------------
 # Configuración
@@ -186,12 +190,8 @@ def build_combinations(room_types, guests, number_of_nights):
     """
     Arma opciones con capacidad suficiente para alojar al grupo.
 
-    Puede combinar más de un tipo de habitación. Por ejemplo:
-    - 1 habitación con capacidad 4
-    - 2 habitaciones con capacidad 2 cada una
-
-    La cantidad de cada tipo no puede superar su inventario disponible
-    durante todas las noches.
+    Puede combinar más de un tipo de habitación. La cantidad de cada tipo
+    no puede superar su disponibilidad durante todas las noches.
     """
     # Primero intenta habitaciones con más capacidad y luego menor precio.
     room_types = sorted(
@@ -211,8 +211,7 @@ def build_combinations(room_types, guests, number_of_nights):
         total_room_count,
         total_price,
     ):
-        # En cuanto la combinación alcanza la capacidad requerida,
-        # guardamos la opción y no agregamos habitaciones innecesarias.
+        # Si ya alcanza la capacidad, guardamos la combinación.
         if total_capacity >= guests:
             combinations.append({
                 "habitaciones": list(selected_rooms),
@@ -223,7 +222,7 @@ def build_combinations(room_types, guests, number_of_nights):
             })
             return
 
-        # Ya se revisaron todos los tipos.
+        # Ya se revisaron todos los tipos sin alcanzar la capacidad necesaria.
         if index >= len(room_types):
             return
 
@@ -234,8 +233,8 @@ def build_combinations(room_types, guests, number_of_nights):
         )
         price_per_night = Decimal(str(room_type["precio_base"]))
 
-        # Probamos cero, una o más habitaciones de este tipo,
-        # sin superar el inventario disponible.
+        # Probamos cero o más habitaciones de este tipo,
+        # hasta su disponibilidad para toda la estadía.
         for quantity in range(available_units + 1):
             added_capacity = quantity * room_type_capacity
             added_price = (
@@ -262,6 +261,11 @@ def build_combinations(room_types, guests, number_of_nights):
             if quantity > 0:
                 selected_rooms.pop()
 
+            # Si esta cantidad ya alcanza, no probamos más habitaciones
+            # de este mismo tipo: serían habitaciones innecesarias.
+            if total_capacity + added_capacity >= guests:
+                break
+
     search(
         index=0,
         selected_rooms=[],
@@ -270,8 +274,8 @@ def build_combinations(room_types, guests, number_of_nights):
         total_price=Decimal("0"),
     )
 
-    # Primero muestra las opciones con menos habitaciones.
-    # Si empatan, muestra primero la de menor precio.
+    # Prioriza menos habitaciones; después, menor precio y menor capacidad
+    # sobrante.
     combinations.sort(
         key=lambda option: (
             option["cantidad_habitaciones"],
