@@ -99,6 +99,19 @@ Para destruir todos los recursos creados en AWS y evitar consumir créditos adic
 sam delete
 ```
 
+## 5.5. Pruebas locales (sin AWS)
+
+```bash
+pip install -r requirements-dev.txt
+pytest tests -v                      # moto simula DynamoDB y SQS en memoria
+
+docker run -p 8000:8000 amazon/dynamodb-local
+python scripts/seed.py               # siembra DynamoDB Local
+python scripts/invoke_reserva_local.py --tipo KING-RIVER --noches 2 --repetir 3
+```
+
+Variables de la Lambda de reserva: `TABLE_NAME`, `HOTEL_ID`, `DYNAMODB_ENDPOINT` (local), `EVENTS_QUEUE_URL` (si falta, los eventos a SQS se omiten).
+
 ## 6. Consideraciones de Escalabilidad Multi-Hotel
 
 Aunque la implementación inicial cubre la operación de un solo hotel, el diseño incluye las siguientes decisiones arquitectónicas para facilitar la transición a un modelo SaaS multi-hotel:
