@@ -7,6 +7,7 @@ Invoca la Lambda de reserva contra DynamoDB Local (sin AWS).
 
 Sin EVENTS_QUEUE_URL los eventos a SQS se omiten (solo se imprime un aviso).
 """
+
 import argparse
 import json
 import os

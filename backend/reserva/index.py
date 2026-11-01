@@ -417,15 +417,8 @@ def lambda_handler(event, context):
         transaction = build_transaction(reservation, quantities, night_list)
         run_transaction(transaction, token)
 
-        publish_event("RESERVA_CREADA", {
-            "reservaId": reservation_id,
-            "usuarioId": user_id,
-            "habitaciones": reservation["habitaciones"],
-            "entrada": reservation["fecha_inicio"],
-            "salida": reservation["fecha_fin"],
-            "total": total,
-        })
-
+        # Solo se avisa al admin cuando un tipo se agota; cada reserva
+        # individual no genera evento (el panel la consulta cuando lo abre).
         for type_id, nights_at_zero in find_sold_out_types(
             quantities, night_list
         ).items():

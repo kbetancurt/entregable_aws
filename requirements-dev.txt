@@ -1,3 +1,6 @@
--r requirements.txt
+# Dependencias para probar localmente la Lambda de reserva (sin AWS)
+boto3>=1.34
+python-dotenv>=1.0
 pytest>=8
 moto[dynamodb,sqs]>=5
+tzdata

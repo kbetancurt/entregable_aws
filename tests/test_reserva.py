@@ -6,7 +6,6 @@ Pruebas locales de la Lambda de reserva. No tocan AWS: moto simula DynamoDB y SQ
 """
 import importlib.util
 import json
-import os
 import threading
 from datetime import date, timedelta
 from pathlib import Path
@@ -30,8 +29,13 @@ def env(monkeypatch):
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
     monkeypatch.setenv("AWS_REGION", "us-east-1")
     monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
-    monkeypatch.delenv("DYNAMODB_ENDPOINT", raising=False)
-    monkeypatch.delenv("SQS_ENDPOINT", raising=False)
+    # Un .env local (p. ej. DYNAMODB_ENDPOINT de DynamoDB Local) no debe filtrarse
+    # a las pruebas: se anula load_dotenv y se fijan las variables que usa la Lambda.
+    monkeypatch.setattr("dotenv.load_dotenv", lambda *args, **kwargs: False)
+    monkeypatch.setenv("DYNAMODB_ENDPOINT", "")
+    monkeypatch.setenv("SQS_ENDPOINT", "")
+    monkeypatch.setenv("TABLE_NAME", "HotelSystemTable")
+    monkeypatch.setenv("HOTEL_ID", HOTEL)
 
 
 @pytest.fixture
@@ -123,19 +127,19 @@ def test_reserva_ok_descuenta_cada_noche_y_calcula_precio(world):
     assert [available(table, "KING-RIVER", i) for i in range(4)] == [1, 1, 1, 2]  # la salida no cuenta
 
 
-def test_publica_reserva_creada(world):
+def test_reserva_normal_no_publica_eventos(world):
     module, table, sqs, q = world
     book(module, [{"tipo_id": "KING-RIVER", "cantidad": 1}])
-    evs = events(sqs, q)
-    assert [e["tipo"] for e in evs] == ["RESERVA_CREADA"]
-    assert evs[0]["hotelId"] == HOTEL and evs[0]["eventId"]
+    assert events(sqs, q) == []
 
 
 def test_capacidad_agotada(world):
     module, table, sqs, q = world
     book(module, [{"tipo_id": "QUEEN-QUEEN-RIVER", "cantidad": 1}], 0, 2)
-    tipos = [e["tipo"] for e in events(sqs, q)]
-    assert "CAPACIDAD_AGOTADA" in tipos
+    evs = events(sqs, q)
+    assert [e["tipo"] for e in evs] == ["CAPACIDAD_AGOTADA"]
+    assert evs[0]["hotelId"] == HOTEL and evs[0]["eventId"]
+    assert evs[0]["tipoHabitacion"] == "QUEEN-QUEEN-RIVER"
 
 
 def test_sin_disponibilidad_409_y_no_descuenta_nada(world):
