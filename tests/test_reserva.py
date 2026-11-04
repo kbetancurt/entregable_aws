@@ -6,7 +6,9 @@ Pruebas locales de la Lambda de reserva. No tocan AWS: moto simula DynamoDB y SQ
 """
 import importlib.util
 import json
+import os
 import threading
+import uuid
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -21,6 +23,16 @@ TOMORROW = date.today() + timedelta(days=2)
 
 def iso(offset):
     return (TOMORROW + timedelta(days=offset)).isoformat()
+
+
+def load_reserva():
+    """Carga una instancia nueva de la Lambda (con sus propios clientes de boto3)."""
+    spec = importlib.util.spec_from_file_location(
+        "reserva_index", ROOT / "backend/reserva/index.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 @pytest.fixture
@@ -75,13 +87,7 @@ def world(env, monkeypatch):
         queue_url = sqs.create_queue(QueueName="eventos")["QueueUrl"]
         monkeypatch.setenv("EVENTS_QUEUE_URL", queue_url)
 
-        spec = importlib.util.spec_from_file_location(
-            "reserva_index", ROOT / "backend/reserva/index.py"
-        )
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-
-        yield module, table, sqs, queue_url
+        yield load_reserva(), table, sqs, queue_url
 
 
 def request(body, sub="user-1", headers=None):
@@ -162,13 +168,24 @@ def test_noche_sin_inventario_sembrado_es_409(world):
     assert book(module, [{"tipo_id": "KING-RIVER", "cantidad": 1}], 8, 12)[0] == 409
 
 
-def test_sobreventa_concurrente(world):
-    """10 clientes a la vez por 1 sola habitación: gana exactamente uno."""
+def test_ultima_habitacion_la_gana_solo_una_reserva(world):
+    """
+    10 clientes piden la única habitación: gana exactamente uno y el resto recibe 409.
+
+    OJO: moto no es seguro entre hilos (se rompe al copiar el estado de la tabla
+    si dos hilos entran a la vez), así que aquí las llamadas se serializan con un
+    candado. Esta prueba valida la condición `disponibles >= cantidad`. La
+    concurrencia real se prueba en test_sobreventa_concurrente_dynamodb_local.
+    """
     module, table, *_ = world
+    lock = threading.Lock()
     results = []
 
     def worker(i):
-        results.append(book(module, [{"tipo_id": "QUEEN-QUEEN-RIVER", "cantidad": 1}], 0, 2, sub=f"u{i}")[0])
+        with lock:
+            results.append(
+                book(module, [{"tipo_id": "QUEEN-QUEEN-RIVER", "cantidad": 1}], 0, 2, sub=f"u{i}")[0]
+            )
 
     threads = [threading.Thread(target=worker, args=(i,)) for i in range(10)]
     [t.start() for t in threads]
@@ -177,6 +194,78 @@ def test_sobreventa_concurrente(world):
     assert sorted(results) == [201] + [409] * 9
     assert available(table, "QUEEN-QUEEN-RIVER", 0) == 0
     assert available(table, "QUEEN-QUEEN-RIVER", 1) == 0
+
+
+@pytest.mark.skipif(
+    not os.getenv("DYNAMODB_LOCAL_URL"),
+    reason="Requiere DynamoDB Local: definí DYNAMODB_LOCAL_URL=http://localhost:8000",
+)
+def test_sobreventa_concurrente_dynamodb_local(env, monkeypatch):
+    """
+    Concurrencia real: 10 hilos a la vez por 1 sola habitación contra DynamoDB Local.
+    Cada hilo usa su propia instancia de la Lambda, como en AWS, donde cada ejecución
+    concurrente corre en su propio entorno con sus propios clientes.
+
+        docker run -p 8000:8000 amazon/dynamodb-local
+        $env:DYNAMODB_LOCAL_URL = "http://localhost:8000"     # PowerShell
+        pytest tests -v -k dynamodb_local
+    """
+    url = os.environ["DYNAMODB_LOCAL_URL"]
+    table_name = f"HotelTest-{uuid.uuid4().hex[:8]}"
+    monkeypatch.setenv("DYNAMODB_ENDPOINT", url)
+    monkeypatch.setenv("TABLE_NAME", table_name)
+    monkeypatch.delenv("EVENTS_QUEUE_URL", raising=False)
+
+        # DynamoDB Local separa los datos por clave de acceso y región: el test debe usar
+    # las mismas credenciales que la Lambda (las de la fixture env), si no la Lambda
+    # "no ve" la tabla y responde 500.
+    ddb = boto3.resource(
+        "dynamodb", endpoint_url=url, region_name="us-east-1",
+        aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+        aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+    )
+    
+    table = ddb.create_table(
+        TableName=table_name,
+        KeySchema=[
+            {"AttributeName": "PK", "KeyType": "HASH"},
+            {"AttributeName": "SK", "KeyType": "RANGE"},
+        ],
+        AttributeDefinitions=[
+            {"AttributeName": "PK", "AttributeType": "S"},
+            {"AttributeName": "SK", "AttributeType": "S"},
+        ],
+        BillingMode="PAY_PER_REQUEST",
+    )
+    table.wait_until_exists()
+    try:
+        table.put_item(Item={
+            "PK": f"HOTEL#{HOTEL}", "SK": "TIPO#QUEEN-QUEEN-RIVER", "id": "QUEEN-QUEEN-RIVER",
+            "capacidad": 4, "precio_base": 185, "inventario_total": 1,
+        })
+        for i in range(2):
+            table.put_item(Item={
+                "PK": f"HOTEL#{HOTEL}#TIPO#QUEEN-QUEEN-RIVER", "SK": f"NOCHE#{iso(i)}",
+                "fecha": iso(i), "inventario_total": 1, "disponibles": 1,
+            })
+
+        lambdas = [load_reserva() for _ in range(10)]
+        results = []
+
+        def worker(i):
+            results.append(
+                book(lambdas[i], [{"tipo_id": "QUEEN-QUEEN-RIVER", "cantidad": 1}], 0, 2, sub=f"u{i}")[0]
+            )
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(10)]
+        [t.start() for t in threads]
+        [t.join() for t in threads]
+
+        assert sorted(results) == [201] + [409] * 9
+        assert available(table, "QUEEN-QUEEN-RIVER", 0) == 0
+        assert available(table, "QUEEN-QUEEN-RIVER", 1) == 0
+    finally:
+        table.delete()
 
 
 def test_requiere_usuario_del_token(world):
