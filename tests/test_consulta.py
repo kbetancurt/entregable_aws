@@ -7,6 +7,7 @@ moto simula DynamoDB. Los datos tienen el mismo formato que scripts/seed.py.
 """
 import importlib.util
 import json
+import sys
 import time
 from datetime import date, timedelta
 from pathlib import Path
@@ -288,6 +289,12 @@ def test_la_respuesta_incluye_cors(world):
     )
     assert response["headers"]["Access-Control-Allow-Origin"] == "*"
 
+def test_funciona_sin_python_dotenv_instalado(env, monkeypatch):
+    """En AWS la Lambda se empaqueta sin python-dotenv: no debe fallar al cargarse."""
+    monkeypatch.setitem(sys.modules, "dotenv", None)  # `import dotenv` -> ImportError
+    with mock_aws():
+        module = load_module("consulta_sin_dotenv", "backend/consulta/index.py")
+    assert callable(module.lambda_handler)
 
 # -----------------------------
 # Coherencia con la Lambda de reserva

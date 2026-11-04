@@ -6,9 +6,12 @@ from decimal import Decimal
 import boto3
 from boto3.dynamodb.conditions import Key
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
 
-load_dotenv()
+    load_dotenv()
+except ImportError:  # python-dotenv es opcional en AWS
+    pass
 
 
 # -----------------------------
