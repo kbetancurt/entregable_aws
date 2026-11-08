@@ -1,0 +1,11 @@
+/* Estilos de las partes conectadas al backend: panel admin, login y estados. */
+.alerts{border:1px solid #dce2d6}
+.alerts .section-head{align-items:center}
+.ws{font-size:11px;color:var(--muted)}
+.ws.conectado{color:var(--green);font-weight:600}
+.empty{color:var(--muted);font-size:12px;padding:10px 4px}
+.grid>.empty{grid-column:1/-1}
+.switch{font-size:11px;color:var(--muted);margin-top:14px}
+.switch button{border:0;background:none;color:var(--green);font-weight:600;padding:0;cursor:pointer;text-decoration:underline}
+.primary:disabled{opacity:.6;cursor:wait}
+.bookings article small{display:block}
