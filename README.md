@@ -18,40 +18,53 @@ El proyecto implementa una solucion 100% serverless en AWS diseñada para la ope
 ## 2. Arquitectura del Sistema
 El sistema se divide en tres capas principales:
 
-- Frontend / Distribucion: SPA estatica alojada en Amazon S3 y distribuida via Amazon CloudFront.
+- Frontend / Distribucion: SPA estatica en React alojada en Amazon S3. En el Learner Lab se sirve como sitio estatico por HTTP, porque el laboratorio no permite conectar CloudFront al bucket; CloudFront queda como diseño.
 - API y Autenticacion: API Gateway REST (rutas /habitaciones y /reservas), API Gateway WebSocket (alertas en tiempo real) y Amazon Cognito User Pool.
 - Computo y Persistencia: Funciones AWS Lambda (Python), Amazon DynamoDB (Single-Table Design), Amazon SQS (cola de eventos + DLQ), Amazon S3 (respaldo de datos crudos del scraper) y Amazon EventBridge (temporizador del scraper).
+
+El documento completo de arquitectura (diagramas, seguridad, escalabilidad, TCO y resiliencia) esta en [docs/Arquitectura_AWS_Reservas_Hoteleras_v2.docx](docs/Arquitectura_AWS_Reservas_Hoteleras_v2.docx).
+
+### Estado de la implementacion
+
+| Componente | Estado |
+| :--- | :--- |
+| Lambda Consulta, Lambda Reserva | Implementadas y desplegadas |
+| Lambda Avisos, authorizer y conexiones del WebSocket | Implementadas y desplegadas |
+| DynamoDB, SQS + DLQ, Cognito, API REST y WebSocket | Definidos en `template.yaml` y desplegados |
+| Frontend React conectado a la API, Cognito y WebSocket | Publicado en S3 |
+| Lambda Scraper (Playwright + Gemini) y EventBridge | Pendiente |
+| CloudFront, WAF, KMS propia, roles IAM por Lambda | Diseño (el Learner Lab no los permite) |
 
 ---
 
 ## 3. Estructura del Repositorio
 
 ```text
-hotel-serverless-system/
-|-- .gitignore
+entregable_aws/
 |-- README.md
-|-- template.yaml            # Plantilla de infraestructura como codigo (AWS SAM)
+|-- template.yaml            # Infraestructura como codigo (AWS SAM, todas las Lambdas con LabRole)
+|-- requirements.txt         # Dependencias generales (incluye las del scraper)
+|-- requirements-dev.txt     # Dependencias para las pruebas locales
 |
 |-- backend/                 # Codigo fuente de las funciones AWS Lambda
-|   |-- consulta/
-|   |   |-- index.py
-|   |   |-- requirements.txt
-|   |-- reserva/
-|   |   |-- index.py
-|   |   |-- requirements.txt
-|   |-- scraper/
-|   |   |-- Dockerfile       # Contenedor para Playwright + Chromium
-|   |   |-- index.py
-|   |   |-- requirements.txt
-|   |-- avisos/
-|       |-- index.py
-|       |-- requirements.txt
+|   |-- consulta/            # GET /habitaciones (publica)
+|   |-- reserva/             # POST /reservas (transaccion sin sobreventa)
+|   |-- avisos/              # Consume SQS y notifica por WebSocket
+|   |-- ws_authorizer/       # Authorizer de $connect (valida el token de Cognito)
+|   |-- ws_conexiones/       # $connect, $disconnect y $default (ping)
+|   |-- scraper/             # Pendiente: Playwright + Gemini
 |
-|-- frontend/                # SPA estática en React + Vite
-|   |-- ...
+|-- frontend/                # SPA en React + Vite (api.js, auth.js, avisos.js)
 |
-|-- scripts/                 # Scripts auxiliares de desarrollo
-    |-- seed.py              # Script para poblar DynamoDB y crear usuarios en Cognito
+|-- scripts/
+|   |-- seed.py              # Siembra DynamoDB Local
+|   |-- seed_aws.py          # Carga los mismos datos en la tabla desplegada en AWS
+|   |-- usuarios_aws.py      # Crea usuarios de prueba en Cognito (cliente o admin)
+|   |-- publicar_frontend.py # Compila el frontend con las URLs del stack y lo sube a S3
+|   |-- invoke_reserva_local.py
+|
+|-- tests/                   # Pruebas con pytest + moto
+|-- docs/                    # Documento de arquitectura
 ```
 ## 4. Requisitos Previos
 
@@ -63,43 +76,58 @@ hotel-serverless-system/
 
 ## 5. Guía de Despliegue con AWS SAM
 
+### 5.0. Credenciales del Learner Lab
+
+Cada vez que se inicia el lab: **Start Lab → AWS Details → AWS CLI**, copiar el bloque `[default]` en `~/.aws/credentials` (no subirlo al repo) y comprobar con:
+
+```bash
+aws sts get-caller-identity
+```
+
 ### 5.1. Compilación de la Infraestructura
 
 ```bash
 sam build
 ```
 
+Si `sam build` falla con "Acceso denegado" sobre `.aws-sam` (pasa en carpetas de OneDrive), alcanza con volver a ejecutarlo.
+
 ### 5.2. Despliegue en AWS
 
-Para el primer despliegue interactivo:
-
 ```bash
-sam deploy --guided
+sam deploy --stack-name reservas-hoteleras --region us-east-1 --resolve-s3 --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND
 ```
 
-En despliegues posteriores, basta con ejecutar:
-
-```bash
-sam deploy
-```
+Tambien se puede usar `sam deploy --guided` la primera vez; guarda la configuracion en `samconfig.toml` (ignorado por git). Las salidas del stack incluyen `RestApiUrl`, `WebSocketUrl`, `UserPoolClientId` y `FrontendUrl`.
 
 ### 5.3. Poblar la Base de Datos y Usuarios de Prueba
 
-Una vez completado el despliegue de SAM, ejecutar el script de inicialización:
-
 ```bash
-python scripts/seed.py
+python scripts/seed_aws.py
+python scripts/usuarios_aws.py admin@ejemplo.com admin
+python scripts/usuarios_aws.py cliente@ejemplo.com cliente
 ```
 
-### 5.4. Limpieza de Recursos (Eliminar Infraestructura)
+`seed_aws.py` carga los mismos datos que `seed.py` (5 tipos de habitacion y 30 noches) y no pisa el inventario ya consumido. `usuarios_aws.py` pide la contraseña por teclado (minimo 8 caracteres, con mayusculas, minusculas y numeros). Si el stack tiene otro nombre, agregar `--stack <nombre>`.
 
-Para destruir todos los recursos creados en AWS y evitar consumir créditos adicionales:
+### 5.4. Publicar el Frontend
 
 ```bash
-sam delete
+python scripts/publicar_frontend.py
 ```
 
-## 5.5. Pruebas locales (sin AWS)
+Compila el frontend con las URLs del stack (variables `VITE_*`), lo sube al bucket y muestra la URL del sitio.
+
+### 5.5. Limpieza de Recursos (Eliminar Infraestructura)
+
+El bucket del frontend tiene que estar vacio antes de borrar el stack:
+
+```bash
+aws s3 rm s3://reservas-hoteleras-frontend-<AccountId> --recursive
+sam delete --stack-name reservas-hoteleras
+```
+
+### 5.6. Pruebas locales (sin AWS)
 
 ```bash
 pip install -r requirements-dev.txt
@@ -116,7 +144,7 @@ Variables de la Lambda de reserva: `TABLE_NAME`, `HOTEL_ID`, `DYNAMODB_ENDPOINT`
 
 Aunque la implementación inicial cubre la operación de un solo hotel, el diseño incluye las siguientes decisiones arquitectónicas para facilitar la transición a un modelo SaaS multi-hotel:
 
-- **DynamoDB:** Todas las claves primarias incluyen el identificador del hotel desde el primer día (`PK = HOTEL#<id>#HAB#<id>`).
+- **DynamoDB:** Todas las claves primarias incluyen el identificador del hotel desde el primer día (`PK = HOTEL#<hotelId>` para hotel, tipos y reservas; `PK = HOTEL#<hotelId>#TIPO#<tipoId>` para el inventario por noche).
 - **Seguridad:** Inserción del atributo `custom:hotelId` en los tokens JWT de Cognito para validar el aislamiento de datos por inquilino a nivel del autorizador.
 - **Notificaciones:** Clasificación de mensajes en la cola SQS por `hotelId` para filtrar conexiones en el API Gateway WebSocket.
 
@@ -135,7 +163,7 @@ Para la demo, el inventario es simulado. Por ejemplo, se puede definir que hay c
 | **Metadata del hotel** | `HOTEL#aloft-mvd` | `HOTEL#METADATA` | `nombre`, `direccion`, `descripcion`, `amenities` |
 | **Tipo de habitación** | `HOTEL#aloft-mvd` | `TIPO#KING-RIVER` | `nombre`, `capacidad`, `precio_base`, `inventario_total` |
 | **Inventario por noche** | `HOTEL#aloft-mvd#TIPO#KING-RIVER` | `NOCHE#2026-10-23` | `inventario_total`, `disponibles` |
-| **Reserva** | `HOTEL#aloft-mvd` | `RES#RESV-2026-001` | `usuario_id`, `tipo_habitacion`, `fecha_inicio`, `fecha_fin`, `estado`, `precio_total` |
+| **Reserva** | `HOTEL#aloft-mvd` | `RES#RESV-<id>` | `reserva_id`, `usuario_id`, `habitaciones` (lista de `tipo_id` y `cantidad`), `fecha_inicio`, `fecha_fin`, `noches`, `estado`, `precio_total`, `creada_en` |
 | **Alerta OTA / paridad** | `HOTEL#aloft-mvd` | `ALERTA#2026-10-23T14:00:00` | `tipo_habitacion`, `fuente_ota`, `precio_ota`, `precio_directo_web`, `moneda`, `leida` |
 
 ### 7.2. Ejemplos de Registros en JSON (Formato DynamoDB)
@@ -201,10 +229,14 @@ Se almacena un único elemento por estancia, sin importar cuántas noches incluy
 {
   "PK": "HOTEL#aloft-mvd",
   "SK": "RES#RESV-2026-001",
+  "reserva_id": "RESV-2026-001",
   "usuario_id": "usr_998123-abc",
-  "tipo_habitacion": "KING-RIVER",
+  "habitaciones": [
+    { "tipo_id": "KING-RIVER", "cantidad": 1 }
+  ],
   "fecha_inicio": "2026-10-23",
   "fecha_fin": "2026-10-25",
+  "noches": 2,
   "estado": "CONFIRMADA",
   "precio_total": 280,
   "creada_en": "2026-10-20T10:30:00Z"
