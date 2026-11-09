@@ -1,0 +1,9 @@
+{
+  "hotel_name": "Aloft Montevideo",
+  "amenities": ["Wi-Fi gratis", "Piscina interior", "Gimnasio Re:Charge", "Restaurante Nook", "Bar W XYZ"],
+  "prices": [
+    {"provider": "Marriott.com", "price": "US$145"},
+    {"provider": "Booking.com", "price": "US$139"},
+    {"provider": "Expedia", "price": "US$148"}
+  ]
+}

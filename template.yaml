@@ -24,6 +24,20 @@ Parameters:
     Type: Number
     Default: 30
     Description: Maximo de noches por reserva, para acotar la transaccion (seccion 6.2).
+  ScraperModo:
+    Type: String
+    Default: demo
+    AllowedValues: [demo, real]
+    Description: demo lee respuestas guardadas; real abre Booking y Google Travel con Playwright.
+  GeminiApiKey:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: Clave de Gemini. Solo modo real. Pasarla en el deploy, nunca en el repositorio.
+  ScraperSchedule:
+    Type: String
+    Default: rate(6 hours)
+    Description: Frecuencia del scraper (expresion de EventBridge).
 
 Globals:
   Function:
@@ -208,6 +222,30 @@ Resources:
             Method: POST
             Auth:
               Authorizer: CognitoAuth
+
+  # Lambda Scraper: imagen de contenedor (Chromium no entra en un zip). EventBridge la dispara.
+  ScraperFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+      MemorySize: 2048
+      Timeout: 900
+      Environment:
+        Variables:
+          SCRAPER_MODO: !Ref ScraperModo
+          GEMINI_API_KEY: !Ref GeminiApiKey
+          EVENTS_QUEUE_URL: !Ref EventsQueue
+          TABLE_NAME: !Ref HotelSystemTable
+      Events:
+        Programado:
+          Type: Schedule
+          Properties:
+            Schedule: !Ref ScraperSchedule
+    Metadata:
+      Dockerfile: Dockerfile
+      DockerContext: backend/scraper/
+      DockerTag: v1
 
   # ---------------------------------------------------------------
   # API WebSocket (secciones 3, 6.6 y 7.2)
