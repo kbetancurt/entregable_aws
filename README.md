@@ -149,6 +149,8 @@ Se despliega como imagen de contenedor (Chromium no entra en un zip) y EventBrid
 - `demo` (por defecto): lee `backend/scraper/demo/*.json` en vez de abrir los sitios. Es el respaldo si Booking o Google bloquean el acceso desde AWS.
 - `real`: usa Playwright y Gemini.
 
+
+
 ```bash
 # Despliegue (requiere Docker)
 sam build
@@ -170,6 +172,15 @@ python -c "import index; index.lambda_handler({'noches':['2026-11-20'],'fuentes'
 Con `'fuentes':['google']` se prueba Google Travel; si muestra los precios en UYU, agregar `SCRAPER_TIPOS_DE_CAMBIO=UYU=40`.
 
 Variables principales: `SCRAPER_MODO`, `SCRAPER_OFFSETS_DIAS` (noches desde hoy, por defecto `7`), `SCRAPER_UMBRAL_MENOR` (`0.02`), `SCRAPER_UMBRAL_CAMBIO` (`0.10`), `SCRAPER_TIPOS_DE_CAMBIO`, `SCRAPER_FUENTES`, `EVENTS_QUEUE_URL` (si falta, los eventos no se publican).
+
+### 5.8. Alertas del panel de administracion (campanita)
+
+La Lambda Avisos guarda cada alerta en DynamoDB (`PK = HOTEL#<hotelId>`, `SK = ALERTA#<fecha>#<eventId>`, con TTL de 30 dias) y la envia por WebSocket a los administradores conectados. La Lambda Alertas permite ver las guardadas, incluidas las que llegaron sin ningun administrador conectado. Ambas rutas requieren el ID token de Cognito y el grupo `admin` (otro usuario recibe 403).
+
+| Ruta | Descripcion |
+|---|---|
+| `GET /alertas?limite=50` | Alertas mas nuevas primero (limite entre 1 y 100) y cantidad de no leidas |
+| `POST /alertas/leer` | Marca como leidas: `{"ids": ["ALERTA#..."]}` o `{"todas": true}` |
 
 ## 6. Consideraciones de Escalabilidad Multi-Hotel
 
