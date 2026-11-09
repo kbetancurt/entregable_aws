@@ -40,3 +40,12 @@ export function crearReserva({ entrada, salida, huespedes, habitaciones }, idTok
     body: JSON.stringify({ entrada, salida, huespedes, habitaciones }),
   });
 }
+
+// Alertas del panel de administración (solo admin): con el ID token de Cognito.
+export function listarAlertas(idToken, limite = 50) {
+  return request(`/alertas?limite=${limite}`, { token: idToken });
+}
+
+export function marcarAlertasLeidas(cuerpo, idToken) {
+  return request("/alertas/leer", { method: "POST", token: idToken, body: JSON.stringify(cuerpo) });
+}

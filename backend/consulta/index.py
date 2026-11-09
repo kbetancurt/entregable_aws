@@ -291,6 +291,33 @@ def build_combinations(room_types, guests, number_of_nights):
 
 
 # -----------------------------
+# Límite de opciones a mostrar
+# -----------------------------
+
+def limit_combinations(combinations, guests):
+    """
+    Reduce la lista a las mejores opciones. Con varios tipos de habitación
+    el número de combinaciones crece rápido y abruma a quien busca.
+
+    - Descarta opciones con demasiados lugares sobrantes (MAX_CAPACIDAD_SOBRANTE),
+      salvo que sean las únicas disponibles.
+    - Conserva solo las primeras MAX_COMBINACIONES, ya ordenadas por menos
+      habitaciones, menor precio y menor capacidad sobrante.
+
+    Devuelve (opciones, total_antes_del_limite).
+    """
+    max_options = int(os.getenv("MAX_COMBINACIONES", "6"))
+    max_spare = int(os.getenv("MAX_CAPACIDAD_SOBRANTE", "2"))
+
+    adjusted = [
+        option for option in combinations
+        if option["capacidad_total"] - guests <= max_spare
+    ] or combinations
+
+    return adjusted[:max_options], len(combinations)
+
+
+# -----------------------------
 # Conversión de valores para JSON
 # -----------------------------
 
@@ -345,12 +372,17 @@ def lambda_handler(event, context):
             number_of_nights=number_of_nights,
         )
 
+        combinations, total_options = limit_combinations(
+            combinations, guests
+        )
+
         return make_response(200, {
             "hotel_id": HOTEL_ID,
             "entrada": check_in.isoformat(),
             "salida": check_out.isoformat(),
             "noches": number_of_nights,
             "huespedes": guests,
+            "opciones_totales": total_options,
             "combinaciones": combinations,
         })
 
