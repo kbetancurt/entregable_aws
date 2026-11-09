@@ -1,0 +1,65 @@
+/* Estilos de las partes conectadas al backend: panel admin, login y estados. */
+.alerts{border:1px solid #dce2d6}
+.alerts .section-head{align-items:center}
+.ws{font-size:11px;color:var(--muted)}
+.ws.conectado{color:var(--green);font-weight:600}
+.empty{color:var(--muted);font-size:12px;padding:10px 4px}
+.grid>.empty{grid-column:1/-1}
+.switch{font-size:11px;color:var(--muted);margin-top:14px}
+.switch button{border:0;background:none;color:var(--green);font-weight:600;padding:0;cursor:pointer;text-decoration:underline}
+.primary:disabled{opacity:.6;cursor:wait}
+.bookings article small{display:block}
+
+/* Fotos reales con respaldo al degradado (clase sin-foto) */
+.room,.photo{position:relative;overflow:hidden}
+.room img,.photo img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.room.mosaico img{width:50%}
+.room.mosaico img+img{left:50%}
+.room:not(.sin-foto)>b,.room:not(.sin-foto)>small{display:none}
+.photo:not(.sin-foto)::after{content:"";position:absolute;inset:0;background:linear-gradient(0deg,#19251dcc,transparent 55%)}
+.photo>span,.photo>strong{position:relative;z-index:1}
+.hotel-foto{margin-left:auto;width:220px;height:110px;flex:none;overflow:hidden;border-radius:4px}
+.hotel-foto img{width:100%;height:100%;object-fit:cover;display:block}
+.hotel-foto.sin-foto{display:none}
+@media(max-width:760px){.hotel{flex-wrap:wrap}.hotel-foto{margin-left:0;width:100%;height:150px}}
+
+/* Campanita de alertas */
+.acciones{display:flex;align-items:center;gap:12px}
+.campana{position:relative}
+.campana-btn{position:relative;width:40px;height:40px;border:1px solid #dce2d6;border-radius:50%;background:white;color:#202721;display:grid;place-items:center}
+.campana-btn:hover{border-color:var(--green);color:var(--green)}
+.campana-badge{position:absolute;top:-4px;right:-4px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:#c4452f;color:white;font-size:10px;font-weight:700;display:grid;place-items:center}
+.campana-fondo{position:fixed;inset:0;z-index:5}
+.campana-lista{position:absolute;right:0;top:50px;z-index:6;width:min(390px,92vw);max-height:70vh;overflow:auto;background:white;border:1px solid #e3e6dd;box-shadow:0 14px 40px #25332626}
+.campana-cabecera{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid #eee;font-size:13px}
+.campana-cabecera .ws{font-size:10px}
+.campana-cabecera button{margin-left:auto;border:0;background:none;color:var(--green);font-size:10px;font-weight:700;text-decoration:underline}
+.alerta{width:100%;display:grid;grid-template-columns:34px 1fr auto;gap:12px;align-items:start;text-align:left;border:0;border-bottom:1px solid #f0f0ea;background:white;padding:13px 16px}
+.alerta:hover{background:#f8f7f2}
+.alerta.nueva{background:#f4f8ec}
+.alerta strong{display:block;font-size:12px}
+.alerta small{display:block;margin-top:3px;font-size:10px;color:var(--muted);line-height:1.5}
+.alerta time{font-size:9px;color:var(--muted);white-space:nowrap}
+.alerta>i,.toast i,.detalle-icono{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font:700 15px Georgia;font-style:normal}
+.detalle-icono{display:inline-grid;width:22px;height:22px;font-size:12px;vertical-align:middle;margin-right:4px}
+.precio i,.precio .detalle-icono{background:#e2efd5;color:#2f6b2f}
+.cambio i,.cambio .detalle-icono{background:#f6ead2;color:#9a6208}
+.amenities i,.amenities .detalle-icono{background:#e1e9f2;color:#2f5878}
+.agotada i,.agotada .detalle-icono{background:#f5dcd7;color:#a43d2d}
+/* detalle */
+.detalle dl{margin:16px 0 0;display:grid;gap:0}
+.detalle dl div{display:flex;justify-content:space-between;gap:16px;padding:10px 0;border-bottom:1px solid #e6e5df;font-size:12px}
+.detalle dt{color:var(--muted)}
+.detalle dd{margin:0;font-weight:600;text-align:right}
+.detalle-sub{margin:18px 0 8px;font-size:11px;font-weight:700}
+.chips{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:6px;max-height:220px;overflow:auto}
+.chips li{background:#edf0e7;border-radius:14px;padding:5px 10px;font-size:10px}
+/* aviso emergente */
+.toast{position:fixed;top:124px;right:20px;z-index:7;width:min(340px,calc(100vw - 40px));display:flex;background:white;border:1px solid #e3e6dd;box-shadow:0 12px 34px #25332633;animation:toast-in .25s ease-out}
+.toast-cuerpo{flex:1;display:grid;grid-template-columns:34px 1fr;gap:12px;text-align:left;border:0;background:none;padding:13px 4px 13px 14px}
+.toast strong{display:block;font-size:12px}
+.toast small{display:block;margin-top:3px;font-size:10px;color:var(--muted);line-height:1.5}
+.toast-cerrar{border:0;background:none;font-size:20px;color:var(--muted);padding:0 12px;align-self:flex-start;margin-top:8px}
+.toast.precio{border-left:4px solid #5c9a3c}.toast.cambio{border-left:4px solid #d19a2a}.toast.amenities{border-left:4px solid #4d7ea3}.toast.agotada{border-left:4px solid #c4452f}
+@keyframes toast-in{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+@media(max-width:760px){.acciones{gap:8px}.campana-lista{position:fixed;left:12px;right:12px;top:118px;width:auto}.toast{top:112px;right:12px}.alerta{grid-template-columns:34px 1fr}.alerta time{grid-column:2}}

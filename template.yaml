@@ -1,0 +1,460 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Reservas hoteleras serverless (Aloft Montevideo). Tabla unica, cola de
+  eventos con DLQ, Cognito, API REST (Consulta y Reserva) y API WebSocket con Avisos.
+  En el Learner Lab todas las Lambdas usan LabRole (seccion 7.3 del documento).
+
+Parameters:
+  HotelId:
+    Type: String
+    Default: aloft-mvd
+    Description: Identificador del hotel; va en todas las claves (secciones 5 y 9).
+  HotelTimezone:
+    Type: String
+    Default: America/Montevideo
+  StageName:
+    Type: String
+    Default: prod
+  AllowedOrigin:
+    Type: String
+    Default: "*"
+    Description: Origen permitido por CORS. Restringir al dominio del frontend cuando exista (seccion 7.3).
+  MaxNights:
+    Type: Number
+    Default: 30
+    Description: Maximo de noches por reserva, para acotar la transaccion (seccion 6.2).
+  ScraperModo:
+    Type: String
+    Default: demo
+    AllowedValues: [demo, real]
+    Description: demo lee respuestas guardadas; real abre Booking y Google Travel con Playwright.
+  GeminiApiKey:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: Clave de Gemini. Solo modo real. Pasarla en el deploy, nunca en el repositorio.
+  ScraperSchedule:
+    Type: String
+    Default: rate(6 hours)
+    Description: Frecuencia del scraper (expresion de EventBridge).
+
+Globals:
+  Function:
+    Architectures: [x86_64]
+    MemorySize: 256
+    Timeout: 10
+    Environment:
+      Variables:
+        TABLE_NAME: !Ref HotelSystemTable
+        HOTEL_ID: !Ref HotelId
+        HOTEL_TIMEZONE: !Ref HotelTimezone
+
+Resources:
+  # ---------------------------------------------------------------
+  # Persistencia: DynamoDB tabla unica (seccion 5)
+  # ---------------------------------------------------------------
+  HotelSystemTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-HotelSystemTable"
+      BillingMode: PAY_PER_REQUEST          # bajo demanda (seccion 8)
+      AttributeDefinitions:
+        - { AttributeName: PK, AttributeType: S }
+        - { AttributeName: SK, AttributeType: S }
+      KeySchema:
+        - { AttributeName: PK, KeyType: HASH }
+        - { AttributeName: SK, KeyType: RANGE }
+      TimeToLiveSpecification:              # limpia conexiones y eventos procesados (secciones 6.3 y 6.6)
+        AttributeName: ttl
+        Enabled: true
+      PointInTimeRecoverySpecification:     # respaldos (seccion 7.1)
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+
+  # ---------------------------------------------------------------
+  # Mensajeria: SQS estandar + DLQ (secciones 3 y 6.4)
+  # ---------------------------------------------------------------
+  EventsDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-events-dlq"
+      MessageRetentionPeriod: 1209600       # 14 dias
+      SqsManagedSseEnabled: true
+
+  EventsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-events"
+      # Al menos 6 veces el timeout de la Lambda consumidora (Avisos, 10 s).
+      VisibilityTimeout: 60
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt EventsDLQ.Arn
+        maxReceiveCount: 4                  # entre 3 y 5 recepciones (seccion 6.4)
+
+  # ---------------------------------------------------------------
+  # Autenticacion: Cognito (secciones 3 y 7.2)
+  # ---------------------------------------------------------------
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub "${AWS::StackName}-usuarios"
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+      Schema:
+        - Name: email
+          Required: true
+          Mutable: true
+        # Hotel al que pertenece un administrador (seccion 9).
+        - Name: hotelId
+          AttributeDataType: String
+          Mutable: true
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub "${AWS::StackName}-web"
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false                 # SPA en el navegador
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      # JWT de vida corta con renovacion por refresh token (seccion 7.2).
+      AccessTokenValidity: 1
+      IdTokenValidity: 1
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: hours
+        IdToken: hours
+        RefreshToken: days
+      PreventUserExistenceErrors: ENABLED
+
+  ClienteGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: cliente
+      UserPoolId: !Ref UserPool
+      Description: Clientes que consultan y reservan.
+
+  AdminGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: admin
+      UserPoolId: !Ref UserPool
+      Description: Administradores del hotel (panel y alertas).
+
+  # ---------------------------------------------------------------
+  # API REST (secciones 3 y 4)
+  # ---------------------------------------------------------------
+  RestApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub "${AWS::StackName}-rest"
+      StageName: !Ref StageName
+      Cors:
+        AllowOrigin: !Sub "'${AllowedOrigin}'"
+        AllowHeaders: "'Content-Type,Authorization,Idempotency-Key'"
+        AllowMethods: "'GET,POST,OPTIONS'"
+      Auth:
+        Authorizers:
+          CognitoAuth:
+            UserPoolArn: !GetAtt UserPool.Arn
+      # Que los 401/403 de API Gateway tambien lleven CORS y el navegador los pueda leer.
+      GatewayResponses:
+        DEFAULT_4XX:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: !Sub "'${AllowedOrigin}'"
+              Access-Control-Allow-Headers: "'Content-Type,Authorization,Idempotency-Key'"
+        DEFAULT_5XX:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: !Sub "'${AllowedOrigin}'"
+      MethodSettings:
+        - ResourcePath: "/*"
+          HttpMethod: "*"
+          ThrottlingRateLimit: 50           # limites de uso (seccion 7.3)
+          ThrottlingBurstLimit: 100
+
+  # Lambda Consulta: GET /habitaciones, publica (seccion 4.1)
+  ConsultaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend/consulta/
+      Runtime: python3.13
+      Handler: index.lambda_handler
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+      Events:
+        GetHabitaciones:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /habitaciones
+            Method: GET
+
+  # Lambda Crear Reserva: POST /reservas con JWT (secciones 4.2 y 6.2)
+  ReservaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend/reserva/
+      Runtime: python3.13
+      Handler: index.lambda_handler
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+      Environment:
+        Variables:
+          EVENTS_QUEUE_URL: !Ref EventsQueue
+          MAX_NIGHTS: !Ref MaxNights
+      Events:
+        PostReservas:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /reservas
+            Method: POST
+            Auth:
+              Authorizer: CognitoAuth
+
+  # Lambda Alertas: GET /alertas y POST /alertas/leer, solo admin (campanita del panel)
+  AlertasFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend/alertas/
+      Runtime: python3.13
+      Handler: index.lambda_handler
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+      Events:
+        GetAlertas:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /alertas
+            Method: GET
+            Auth:
+              Authorizer: CognitoAuth
+        PostAlertasLeer:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /alertas/leer
+            Method: POST
+            Auth:
+              Authorizer: CognitoAuth
+
+  # Lambda Scraper: imagen de contenedor (Chromium no entra en un zip). EventBridge la dispara.
+  ScraperFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+      MemorySize: 2048
+      Timeout: 900
+      Environment:
+        Variables:
+          SCRAPER_MODO: !Ref ScraperModo
+          GEMINI_API_KEY: !Ref GeminiApiKey
+          EVENTS_QUEUE_URL: !Ref EventsQueue
+          TABLE_NAME: !Ref HotelSystemTable
+      Events:
+        Programado:
+          Type: Schedule
+          Properties:
+            Schedule: !Ref ScraperSchedule
+    Metadata:
+      Dockerfile: Dockerfile
+      DockerContext: backend/scraper/
+      DockerTag: v1
+
+  # ---------------------------------------------------------------
+  # API WebSocket (secciones 3, 6.6 y 7.2)
+  # ---------------------------------------------------------------
+  WebSocketApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub "${AWS::StackName}-ws"
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: "$request.body.action"
+
+  # Lambda authorizer en $connect: valida el token que llega en ?token=
+  WsAuthorizerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend/ws_authorizer/
+      Runtime: python3.13
+      Handler: index.lambda_handler
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+
+  WsAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties:
+      Name: CognitoTokenAuthorizer
+      ApiId: !Ref WebSocketApi
+      AuthorizerType: REQUEST
+      AuthorizerUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WsAuthorizerFunction.Arn}/invocations"
+      IdentitySource:
+        - route.request.querystring.token
+
+  WsAuthorizerPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref WsAuthorizerFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/authorizers/${WsAuthorizer}"
+
+  # $connect / $disconnect / $default (ping)
+  WsConexionesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend/ws_conexiones/
+      Runtime: python3.13
+      Handler: index.lambda_handler
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+
+  WsConexionesIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WsConexionesFunction.Arn}/invocations"
+
+  WsConexionesPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref WsConexionesFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*"
+
+  ConnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: $connect
+      AuthorizationType: CUSTOM
+      AuthorizerId: !Ref WsAuthorizer
+      Target: !Sub "integrations/${WsConexionesIntegration}"
+
+  DisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: $disconnect
+      Target: !Sub "integrations/${WsConexionesIntegration}"
+
+  DefaultRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: $default
+      RouteResponseSelectionExpression: $default   # devuelve el PONG al cliente
+      Target: !Sub "integrations/${WsConexionesIntegration}"
+
+  DefaultRouteResponse:
+    Type: AWS::ApiGatewayV2::RouteResponse
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteId: !Ref DefaultRoute
+      RouteResponseKey: $default
+
+  WebSocketStage:
+    Type: AWS::ApiGatewayV2::Stage
+    DependsOn: [ConnectRoute, DisconnectRoute, DefaultRoute]
+    Properties:
+      ApiId: !Ref WebSocketApi
+      StageName: !Ref StageName
+      AutoDeploy: true
+      DefaultRouteSettings:
+        ThrottlingRateLimit: 50
+        ThrottlingBurstLimit: 100
+
+  # ---------------------------------------------------------------
+  # Lambda Avisos: consume SQS y notifica por WebSocket (secciones 6.4 y 6.6)
+  # ---------------------------------------------------------------
+  AvisosFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend/avisos/
+      Runtime: python3.13
+      Handler: index.lambda_handler
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+      Timeout: 10                           # la cola usa 6 x 10 s de visibility timeout
+      Environment:
+        Variables:
+          WS_ENDPOINT: !Sub "https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}"
+      Events:
+        Eventos:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt EventsQueue.Arn
+            BatchSize: 10
+            FunctionResponseTypes:
+              - ReportBatchItemFailures     # reintenta solo los mensajes fallidos
+
+  # ---------------------------------------------------------------
+  # Frontend: SPA estatica en S3 (secciones 3 y 10)
+  # El Learner Lab no permite crear el acceso de CloudFront al bucket
+  # (OAC/OAI), asi que se usa el respaldo de la seccion 10: hosting
+  # estatico de S3 por HTTP. La API y el WebSocket siguen por HTTPS/WSS.
+  # ---------------------------------------------------------------
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-frontend-${AWS::AccountId}"
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: false
+        RestrictPublicBuckets: false
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256          # SSE-S3 (seccion 7.1)
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: LecturaPublicaDelSitio
+            Effect: Allow
+            Principal: "*"
+            Action: s3:GetObject
+            Resource: !Sub "${FrontendBucket.Arn}/*"
+
+Outputs:
+  FrontendBucketName:
+    Value: !Ref FrontendBucket
+  FrontendUrl:
+    Description: Sitio estatico del frontend (HTTP)
+    Value: !GetAtt FrontendBucket.WebsiteURL
+  WebSocketUrl:
+    Description: URL del WebSocket (agregar ?token=<access token de Cognito>)
+    Value: !Sub "wss://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}"
+  RestApiUrl:
+    Description: URL base de la API REST
+    Value: !Sub "https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}"
+  UserPoolId:
+    Value: !Ref UserPool
+  UserPoolClientId:
+    Value: !Ref UserPoolClient
+  TableName:
+    Value: !Ref HotelSystemTable
+  EventsQueueUrl:
+    Value: !Ref EventsQueue
+  EventsDLQUrl:
+    Value: !Ref EventsDLQ

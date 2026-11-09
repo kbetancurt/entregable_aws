@@ -1,0 +1,14 @@
+{
+  "hotel_name": "Aloft Montevideo",
+  "country_code": "uy",
+  "method": "demo",
+  "results": {
+    "amenities": ["Wi-Fi gratis", "Piscina interior", "Gimnasio Re:Charge", "Restaurante Nook"],
+    "rates": [
+      {"room_name": "ALOFT, Guest room, 1 King, City view", "base_price": 114, "taxes": 25, "total_price": 139},
+      {"room_name": "Aloft, Guest room, 2 Twin/Single Bed(s), City view", "base_price": 119, "taxes": 26, "total_price": 145},
+      {"room_name": "ALOFT, Guest room, 2 Queen, City view", "base_price": 152, "taxes": 33, "total_price": 185},
+      {"room_name": "River View, Guest room, 1 King", "base_price": 135, "taxes": 30, "total_price": 165}
+    ]
+  }
+}
