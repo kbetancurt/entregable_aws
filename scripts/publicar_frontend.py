@@ -59,8 +59,14 @@ def upload(bucket):
         content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         if content_type.startswith("text/") or content_type.endswith("javascript"):
             content_type += "; charset=utf-8"
-        # index.html sin caché; los assets llevan hash en el nombre.
-        cache = "no-cache" if key == "index.html" else "public, max-age=31536000, immutable"
+        # index.html sin caché; assets/ lleva hash en el nombre (caché larga);
+        # las fotos de img/ conservan el nombre al cambiarlas: caché corta.
+        if key == "index.html":
+            cache = "no-cache"
+        elif key.startswith("assets/"):
+            cache = "public, max-age=31536000, immutable"
+        else:
+            cache = "public, max-age=3600"
         s3.upload_file(str(path), bucket, key, ExtraArgs={"ContentType": content_type, "CacheControl": cache})
         published.add(key)
         print("subido", key)

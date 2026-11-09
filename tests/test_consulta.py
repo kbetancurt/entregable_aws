@@ -339,3 +339,44 @@ def test_inventario_grande_responde_en_tiempo_razonable(world):
 
     assert status == 200 and data["combinaciones"]
     assert elapsed < 5, f"la búsqueda de combinaciones tardó {elapsed:.1f}s"
+
+
+# -----------------------------
+# Límite de opciones mostradas
+# -----------------------------
+
+def test_cinco_huespedes_no_muestra_mas_del_limite(world, monkeypatch):
+    module, _ = world
+    monkeypatch.setenv("MAX_COMBINACIONES", "3")
+    status, data = search(module, 0, 2, huespedes=5)
+
+    assert status == 200 and len(data["combinaciones"]) == 3
+    assert data["opciones_totales"] > 3                  # había más y se recortaron
+    # Siguen siendo las mejores: menos habitaciones primero, luego menor precio.
+    keys = [(c["cantidad_habitaciones"], c["precio_total"]) for c in data["combinaciones"]]
+    assert keys == sorted(keys)
+
+
+def test_limite_por_defecto_es_seis(world):
+    module, _ = world
+    _, data = search(module, 0, 2, huespedes=7)
+    assert len(data["combinaciones"]) <= 6
+    assert data["opciones_totales"] >= len(data["combinaciones"])
+
+
+def test_descarta_opciones_con_muchos_lugares_sobrantes(world):
+    module, _ = world
+    _, data = search(module, 0, 2, huespedes=1)
+    # Para 1 huésped las habitaciones de 4 (3 lugares de más) quedan afuera.
+    assert all(c["capacidad_total"] - 1 <= 2 for c in data["combinaciones"])
+    assert "QUEEN-QUEEN-CITY" not in offered_types(data["combinaciones"])
+
+
+def test_si_solo_quedan_opciones_sobradas_se_muestran_igual(world):
+    module, table = world
+    for room_id in ("KING-ALOFT", "TWIN-TWIN", "KING-RIVER"):
+        set_available(table, room_id, 0, 0)               # solo quedan habitaciones de 4
+    status, data = search(module, 0, 1, huespedes=1)
+
+    assert status == 200 and data["combinaciones"]
+    assert offered_types(data["combinaciones"]) <= {"QUEEN-QUEEN-CITY", "QUEEN-QUEEN-RIVER"}

@@ -24,10 +24,23 @@ Parameters:
     Type: Number
     Default: 30
     Description: Maximo de noches por reserva, para acotar la transaccion (seccion 6.2).
+  ScraperModo:
+    Type: String
+    Default: demo
+    AllowedValues: [demo, real]
+    Description: demo lee respuestas guardadas; real abre Booking y Google Travel con Playwright.
+  GeminiApiKey:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: Clave de Gemini. Solo modo real. Pasarla en el deploy, nunca en el repositorio.
+  ScraperSchedule:
+    Type: String
+    Default: rate(6 hours)
+    Description: Frecuencia del scraper (expresion de EventBridge).
 
 Globals:
   Function:
-    Runtime: python3.13
     Architectures: [x86_64]
     MemorySize: 256
     Timeout: 10
@@ -178,6 +191,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: backend/consulta/
+      Runtime: python3.13
       Handler: index.lambda_handler
       Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
       Events:
@@ -187,6 +201,28 @@ Resources:
             RestApiId: !Ref RestApi
             Path: /habitaciones
             Method: GET
+
+  # Lambda Crear Reserva: POST /reservas con JWT (secciones 4.2 y 6.2)
+  ReservaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend/reserva/
+      Runtime: python3.13
+      Handler: index.lambda_handler
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+      Environment:
+        Variables:
+          EVENTS_QUEUE_URL: !Ref EventsQueue
+          MAX_NIGHTS: !Ref MaxNights
+      Events:
+        PostReservas:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /reservas
+            Method: POST
+            Auth:
+              Authorizer: CognitoAuth
 
   # Lambda Alertas: GET /alertas y POST /alertas/leer, solo admin (campanita del panel)
   AlertasFunction:
@@ -214,26 +250,29 @@ Resources:
             Auth:
               Authorizer: CognitoAuth
 
-  # Lambda Crear Reserva: POST /reservas con JWT (secciones 4.2 y 6.2)
-  ReservaFunction:
+  # Lambda Scraper: imagen de contenedor (Chromium no entra en un zip). EventBridge la dispara.
+  ScraperFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: backend/reserva/
-      Handler: index.lambda_handler
+      PackageType: Image
       Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+      MemorySize: 2048
+      Timeout: 900
       Environment:
         Variables:
+          SCRAPER_MODO: !Ref ScraperModo
+          GEMINI_API_KEY: !Ref GeminiApiKey
           EVENTS_QUEUE_URL: !Ref EventsQueue
-          MAX_NIGHTS: !Ref MaxNights
+          TABLE_NAME: !Ref HotelSystemTable
       Events:
-        PostReservas:
-          Type: Api
+        Programado:
+          Type: Schedule
           Properties:
-            RestApiId: !Ref RestApi
-            Path: /reservas
-            Method: POST
-            Auth:
-              Authorizer: CognitoAuth
+            Schedule: !Ref ScraperSchedule
+    Metadata:
+      Dockerfile: Dockerfile
+      DockerContext: backend/scraper/
+      DockerTag: v1
 
   # ---------------------------------------------------------------
   # API WebSocket (secciones 3, 6.6 y 7.2)
@@ -250,6 +289,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: backend/ws_authorizer/
+      Runtime: python3.13
       Handler: index.lambda_handler
       Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
 
@@ -276,6 +316,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: backend/ws_conexiones/
+      Runtime: python3.13
       Handler: index.lambda_handler
       Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
 
@@ -343,6 +384,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: backend/avisos/
+      Runtime: python3.13
       Handler: index.lambda_handler
       Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
       Timeout: 10                           # la cola usa 6 x 10 s de visibility timeout
