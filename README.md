@@ -32,7 +32,7 @@ El documento completo de arquitectura (diagramas, seguridad, escalabilidad, TCO 
 | Lambda Avisos, authorizer y conexiones del WebSocket | Implementadas y desplegadas |
 | DynamoDB, SQS + DLQ, Cognito, API REST y WebSocket | Definidos en `template.yaml` y desplegados |
 | Frontend React conectado a la API, Cognito y WebSocket | Publicado en S3 |
-| Lambda Scraper (Playwright + Gemini) y EventBridge | Pendiente |
+| Lambda Scraper (Playwright + Gemini) y EventBridge | Implementada; probada en local con Booking y Google Travel. Despliegue en AWS por verificar |
 | CloudFront, WAF, KMS propia, roles IAM por Lambda | Diseño (el Learner Lab no los permite) |
 
 ---
@@ -52,7 +52,7 @@ entregable_aws/
 |   |-- avisos/              # Consume SQS y notifica por WebSocket
 |   |-- ws_authorizer/       # Authorizer de $connect (valida el token de Cognito)
 |   |-- ws_conexiones/       # $connect, $disconnect y $default (ping)
-|   |-- scraper/             # Pendiente: Playwright + Gemini
+|   |-- scraper/             # Playwright + Gemini (imagen de contenedor), modo demo/real
 |
 |-- frontend/                # SPA en React + Vite (api.js, auth.js, avisos.js)
 |
@@ -139,6 +139,37 @@ python scripts/invoke_reserva_local.py --tipo KING-RIVER --noches 2 --repetir 3
 ```
 
 Variables de la Lambda de reserva: `TABLE_NAME`, `HOTEL_ID`, `DYNAMODB_ENDPOINT` (local), `EVENTS_QUEUE_URL` (si falta, los eventos a SQS se omiten).
+
+### 5.7. Lambda Scraper
+
+Consulta Booking y Google Travel, compara contra la tarifa propia y publica eventos en SQS (`PRECIO_MENOR_EN_PLATAFORMA`, `CAMBIO_PRECIO`, `AMENITIES_DISTINTAS`). Los precios se comparan en USD con impuestos y solo se alerta cuando cambia el estado, no en cada ejecucion.
+
+Se despliega como imagen de contenedor (Chromium no entra en un zip) y EventBridge la dispara por cron. Modos:
+
+- `demo` (por defecto): lee `backend/scraper/demo/*.json` en vez de abrir los sitios. Es el respaldo si Booking o Google bloquean el acceso desde AWS.
+- `real`: usa Playwright y Gemini.
+
+```bash
+# Despliegue (requiere Docker)
+sam build
+sam deploy --parameter-overrides ScraperModo=demo
+sam deploy --parameter-overrides ScraperModo=real GeminiApiKey=<clave>
+```
+
+La clave de Gemini se pasa solo por parametro del deploy o variable de entorno, nunca en el repositorio.
+
+Prueba local de una fuente (con DynamoDB Local y el seed cargados):
+
+```bash
+cd backend/scraper
+export GEMINI_API_KEY=<clave> SCRAPER_MODO=real TABLE_NAME=HotelSystemTable DYNAMODB_ENDPOINT=http://localhost:8000
+export AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local AWS_DEFAULT_REGION=us-east-1
+python -c "import index; index.lambda_handler({'noches':['2026-11-20'],'fuentes':['booking']}, None)"
+```
+
+Con `'fuentes':['google']` se prueba Google Travel; si muestra los precios en UYU, agregar `SCRAPER_TIPOS_DE_CAMBIO=UYU=40`.
+
+Variables principales: `SCRAPER_MODO`, `SCRAPER_OFFSETS_DIAS` (noches desde hoy, por defecto `7`), `SCRAPER_UMBRAL_MENOR` (`0.02`), `SCRAPER_UMBRAL_CAMBIO` (`0.10`), `SCRAPER_TIPOS_DE_CAMBIO`, `SCRAPER_FUENTES`, `EVENTS_QUEUE_URL` (si falta, los eventos no se publican).
 
 ## 6. Consideraciones de Escalabilidad Multi-Hotel
 
