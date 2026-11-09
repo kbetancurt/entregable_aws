@@ -29,6 +29,12 @@ import normalizar
 HOTEL_TIMEZONE = os.getenv("HOTEL_TIMEZONE", "America/Montevideo")
 DEMO_DIR = Path(os.getenv("SCRAPER_DEMO_DIR", Path(__file__).parent / "demo"))
 
+# Chromium en Lambda: sin sandbox de usuario, sin /dev/shm grande, sin GPU y en un solo proceso.
+ARGS_CHROMIUM_LAMBDA = [
+    "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
+    "--disable-gpu", "--single-process", "--no-zygote",
+]
+
 PLATAFORMA_BOOKING = "Booking.com"      # coincide con las claves de `nombres_ota`
 PLATAFORMA_GOOGLE = "Google Travel"
 
@@ -74,6 +80,20 @@ async def _consultar_fuentes(noches, cfg):
     # Importación diferida: exige GEMINI_API_KEY y Playwright, que el modo demo no necesita.
     from booking_scraper import booking_data
     from google_travel_scraper import google_travel_data
+    import booking_scraper
+    import google_travel_scraper
+
+    for modulo in (booking_scraper, google_travel_scraper):
+        modulo.CHROMIUM_ARGS[:] = ARGS_CHROMIUM_LAMBDA
+
+    if os.getenv("AWS_LAMBDA_FUNCTION_NAME"):
+        # En Lambda solo se escribe en /tmp: los scrapers crean carpetas de depuración
+        # en el directorio actual y Chromium necesita un HOME escribible.
+        # Va después de los imports porque estos buscan los módulos en el directorio actual.
+        os.environ["HOME"] = "/tmp"
+        os.chdir("/tmp")
+    # Registro del navegador en CloudWatch (por qué se cerró, qué argumentos usó).
+    os.environ.setdefault("DEBUG", "pw:browser")
 
     semaforo = asyncio.Semaphore(cfg["concurrencia"])
 
@@ -100,7 +120,7 @@ def _procesar_booking(datos, noche, tipos, cfg, observado_en, resumen):
     """Una tarifa por tipo propio: la más barata de las que Booking muestra para ese tipo."""
     resultados = datos.get("results") if "results" in datos else datos
     if "error" in datos or not resultados or not resultados.get("rates"):
-        resumen["fuentes_sin_datos"].append(f"{PLATAFORMA_BOOKING} {noche}")
+        resumen["fuentes_sin_datos"].append(f"{PLATAFORMA_BOOKING} {noche}: {datos.get('error') or 'sin tarifas'}")
         return []
 
     por_tipo = {}
@@ -131,7 +151,7 @@ def _procesar_google(datos, noche, tipos, cfg, observado_en, resumen):
     la tarifa propia más baja. El proveedor del propio hotel no se compara contra sí mismo.
     """
     if "error" in datos or not datos.get("prices"):
-        resumen["fuentes_sin_datos"].append(f"{PLATAFORMA_GOOGLE} {noche}")
+        resumen["fuentes_sin_datos"].append(f"{PLATAFORMA_GOOGLE} {noche}: {datos.get('error') or 'sin precios'}")
         return []
 
     tipo_base = min(tipos, key=lambda t: Decimal(str(t["precio_base"])))
@@ -217,6 +237,9 @@ def lambda_handler(event, context):
     for (fuente, noche), datos in sorted(fuentes.items(), key=lambda kv: (kv[0][1], kv[0][0])):
         plataforma = PLATAFORMA_BOOKING if fuente == "booking" else PLATAFORMA_GOOGLE
         almacen.guardar_respaldo_crudo(plataforma, noche, observado_en, datos)
+        # Lo que devolvió cada fuente (recortado): imprescindible para diagnosticar bloqueos.
+        print(f"[scraper] {plataforma} {noche} respuesta: "
+              f"{json.dumps(datos, ensure_ascii=False, default=str)[:1500]}")
 
         if fuente == "booking":
             eventos += _procesar_booking(datos, noche, tipos, cfg, observado_en, resumen)

@@ -24,6 +24,19 @@ def _dinero(valor):
     return float(Decimal(valor).quantize(Decimal("0.01")))
 
 
+def _usd(valor):
+    """Para los mensajes: 309 en vez de 309.0, y 309.50 cuando hay centavos."""
+    redondeado = Decimal(valor).quantize(Decimal("0.01"))
+    return f"{redondeado:.0f}" if redondeado == redondeado.to_integral_value() else f"{redondeado:.2f}"
+
+
+def _lista_corta(items, maximo=5):
+    """'a, b, c y 4 más' para que el mensaje se lea de un vistazo."""
+    if len(items) <= maximo:
+        return ", ".join(items)
+    return f"{', '.join(items[:maximo])} y {len(items) - maximo} más"
+
+
 def evaluar_precio(
     plataforma, noche, tipo_id, precio, propio, previo,
     umbral_menor=Decimal("0.02"), umbral_cambio=Decimal("0.10"),
@@ -57,8 +70,8 @@ def evaluar_precio(
             "precioPropio": _dinero(propio),
             "diferenciaPct": _pct(diferencia),
             "mensaje": (
-                f"{plataforma} muestra {etiqueta} a USD {_dinero(precio)} la noche {noche}, "
-                f"{abs(_pct(diferencia))}% menos que la web del hotel (USD {_dinero(propio)})."
+                f"{plataforma} muestra {etiqueta} a USD {_usd(precio)} la noche {noche}, "
+                f"{abs(_pct(diferencia))}% menos que la web del hotel (USD {_usd(propio)})."
             ),
         })
 
@@ -74,7 +87,7 @@ def evaluar_precio(
                 "variacionPct": _pct(variacion),
                 "mensaje": (
                     f"{plataforma} cambió {etiqueta} la noche {noche}: "
-                    f"de USD {_dinero(anterior)} a USD {_dinero(precio)} ({_pct(variacion):+}%)."
+                    f"de USD {_usd(anterior)} a USD {_usd(precio)} ({_pct(variacion):+}%)."
                 ),
             })
 
@@ -87,44 +100,28 @@ def hash_amenities(conjunto):
 
 def evaluar_amenities(plataforma, amenities_plataforma, amenities_hotel, previo):
     """
-    previo: {'conjunto': [...], 'hash': '...'} o None. Devuelve (evento|None, estado_nuevo).
-    - Si cambió respecto de la observación anterior: se informa lo agregado y lo quitado.
-    - En la primera observación: se informa lo que el hotel ofrece y la plataforma no muestra.
-    Solo se avisa cuando la diferencia es nueva (mismo conjunto = sin alerta repetida).
+    previo: {'conjunto', 'hash', 'faltantes'} o None. Devuelve (evento|None, estado_nuevo).
+
+    Se avisa por lo que el hotel ofrece y la plataforma no muestra (faltantes). No se compara
+    contra la lectura anterior de la plataforma: el modelo lee a veces la lista corta y a veces
+    la completa de instalaciones, y eso no es un cambio del hotel. Solo se avisa cuando el
+    conjunto de faltantes cambia, para no repetir la alerta en cada ejecución.
     """
     conjunto = normalizar_amenities(amenities_plataforma)
     if not conjunto:
         # Lista vacía = lectura fallida, no "el hotel no tiene nada".
         return None, previo
 
-    estado = {"conjunto": conjunto, "hash": hash_amenities(conjunto)}
-    if previo and previo.get("hash") == estado["hash"]:
+    faltantes = faltantes_en(amenities_hotel, amenities_plataforma)
+    estado = {"conjunto": conjunto, "hash": hash_amenities(conjunto), "faltantes": faltantes}
+
+    anteriores = list((previo or {}).get("faltantes", []))
+    if not faltantes or faltantes == anteriores:
         return None, estado
-
-    if previo:
-        agregadas = sorted(set(conjunto) - set(previo.get("conjunto", [])))
-        quitadas = sorted(set(previo.get("conjunto", [])) - set(conjunto))
-        faltantes = []
-    else:
-        agregadas, quitadas = [], []
-        faltantes = faltantes_en(amenities_hotel, amenities_plataforma)
-
-    if not (agregadas or quitadas or faltantes):
-        return None, estado
-
-    partes = []
-    if faltantes:
-        partes.append(f"no muestra: {', '.join(faltantes)}")
-    if agregadas:
-        partes.append(f"agregó: {', '.join(agregadas)}")
-    if quitadas:
-        partes.append(f"quitó: {', '.join(quitadas)}")
 
     return {
         "tipo": "AMENITIES_DISTINTAS",
         "plataforma": plataforma,
         "faltantes": faltantes,
-        "agregadas": agregadas,
-        "quitadas": quitadas,
-        "mensaje": f"Las amenities en {plataforma} difieren: " + "; ".join(partes) + ".",
+        "mensaje": f"{plataforma} no muestra {len(faltantes)} amenities del hotel: {_lista_corta(faltantes)}.",
     }, estado

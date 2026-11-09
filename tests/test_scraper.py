@@ -102,17 +102,47 @@ def test_sin_precio_no_alerta_ni_guarda_cero():
     assert ev == [] and estado == {"precio": None, "disponible": False, "menor": False}
 
 
-def test_amenities_primera_vez_informa_faltantes_y_luego_calla():
-    hotel = ["Wi-Fi", "Piscina interior", "Bar W XYZ"]
-    ev, estado = comparar.evaluar_amenities("Booking.com", ["Wi-Fi gratis", "Piscina interior"], hotel, None)
-    assert ev["tipo"] == "AMENITIES_DISTINTAS" and ev["faltantes"] == ["bar w xyz"]
-    ev, _ = comparar.evaluar_amenities("Booking.com", ["Wi-Fi gratis", "Piscina interior"], hotel, estado)
+def test_amenities_informa_faltantes_y_luego_calla():
+    hotel = ["Wi-Fi", "Piscina interior", "Bar W XYZ", "Sauna"]
+    visibles = ["Wi-Fi gratis", "Piscina cubierta"]
+    ev, estado = comparar.evaluar_amenities("Booking.com", visibles, hotel, None)
+    assert ev["tipo"] == "AMENITIES_DISTINTAS" and ev["faltantes"] == ["bar w xyz", "sauna"]
+    assert "2 amenities" in ev["mensaje"]
+    ev, _ = comparar.evaluar_amenities("Booking.com", visibles, hotel, estado)
     assert ev is None
+
+
+def test_amenities_lista_larga_o_corta_de_la_plataforma_no_es_un_cambio():
+    hotel = ["Wi-Fi", "Piscina interior"]
+    corta = ["wifi gratis", "piscina cubierta"]
+    larga = corta + [f"servicio {i}" for i in range(70)]
+    _, estado = comparar.evaluar_amenities("Booking.com", corta, hotel, None)
+    ev, estado2 = comparar.evaluar_amenities("Booking.com", larga, hotel, estado)
+    assert ev is None and estado2["hash"] != estado["hash"]
+
+
+def test_amenities_nuevo_faltante_vuelve_a_avisar():
+    hotel = ["Wi-Fi", "Sauna"]
+    _, estado = comparar.evaluar_amenities("Booking.com", ["wifi", "sauna"], hotel, None)
+    ev, _ = comparar.evaluar_amenities("Booking.com", ["wifi"], hotel, estado)
+    assert ev and ev["faltantes"] == ["sauna"]
+
+
+def test_amenities_mensaje_corto_con_muchos_faltantes():
+    hotel = [f"servicio {c}" for c in "abcdefghij"]
+    ev, _ = comparar.evaluar_amenities("Booking.com", ["otra cosa"], hotel, None)
+    assert "y 5 más" in ev["mensaje"] and len(ev["mensaje"]) < 200
 
 
 def test_amenities_vacias_es_lectura_fallida():
     ev, estado = comparar.evaluar_amenities("Booking.com", [], ["Wi-Fi"], None)
     assert ev is None and estado is None
+
+
+def test_mensaje_de_precio_sin_decimales_falsos():
+    ev, _ = comparar.evaluar_precio("Booking.com", NOCHE, "KING-ALOFT", D("309"), D("430"), None)
+    assert "USD 309 " in ev[0]["mensaje"] and "USD 430)" in ev[0]["mensaje"]
+    assert ".0" not in ev[0]["mensaje"]
 
 
 # ---------------- handler (modo demo) ----------------

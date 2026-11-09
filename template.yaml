@@ -41,7 +41,6 @@ Parameters:
 
 Globals:
   Function:
-    Runtime: python3.13
     Architectures: [x86_64]
     MemorySize: 256
     Timeout: 10
@@ -192,6 +191,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: backend/consulta/
+      Runtime: python3.13
       Handler: index.lambda_handler
       Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
       Events:
@@ -207,6 +207,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: backend/reserva/
+      Runtime: python3.13
       Handler: index.lambda_handler
       Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
       Environment:
@@ -262,6 +263,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: backend/ws_authorizer/
+      Runtime: python3.13
       Handler: index.lambda_handler
       Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
 
@@ -288,6 +290,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: backend/ws_conexiones/
+      Runtime: python3.13
       Handler: index.lambda_handler
       Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
 
@@ -355,6 +358,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: backend/avisos/
+      Runtime: python3.13
       Handler: index.lambda_handler
       Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
       Timeout: 10                           # la cola usa 6 x 10 s de visibility timeout

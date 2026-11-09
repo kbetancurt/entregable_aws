@@ -121,6 +121,7 @@ def guardar_amenities(plataforma, estado, observado_en):
         "SK": f"AMENITIES#{plataforma}",
         "conjunto": estado["conjunto"],
         "hash": estado["hash"],
+        "faltantes": estado.get("faltantes", []),
         "observado_en": observado_en,
     })
 
