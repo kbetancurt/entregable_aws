@@ -20,7 +20,7 @@ Destinatarios:
 
 Elementos que escribe en HotelSystemTable:
   Evento procesado  PK = EVENTO#<eventId>          SK = PROCESADO            (ttl 1 día)
-  Alerta            PK = HOTEL#<hotelId>           SK = ALERTA#<ocurridoEn>#<eventId>
+  Alerta            PK = HOTEL#<hotelId>           SK = ALERTA#<ocurridoEn>#<eventId>   (ttl 30 días)
 """
 import json
 import os
@@ -46,6 +46,7 @@ DYNAMODB_ENDPOINT = os.getenv("DYNAMODB_ENDPOINT")
 WS_ENDPOINT = os.getenv("WS_ENDPOINT")  # https://<api>.execute-api.<region>.amazonaws.com/<stage>
 
 PROCESSED_TTL_SECONDS = 24 * 60 * 60
+ALERT_TTL_DAYS = int(os.getenv("ALERTA_TTL_DIAS", "30"))  # la tabla limpia sola las alertas viejas
 
 # Eventos que solo informan al cliente y no son alertas del panel.
 EVENTOS_SIN_ALERTA = {"RESERVA_CREADA"}
@@ -135,6 +136,7 @@ def save_alert(event):
         "PK": f"HOTEL#{hotel_id}",
         "SK": f"ALERTA#{occurred_at}#{event['eventId']}",
         "leida": False,
+        "ttl": int(time.time()) + ALERT_TTL_DAYS * 24 * 60 * 60,
     }), parse_float=Decimal))
 
 
